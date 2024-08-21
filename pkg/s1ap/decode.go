@@ -7,8 +7,8 @@ package s1ap
 // #include "ProtocolIE-Field.h"
 import "C"
 import (
+	"encoding/binary"
 	"fmt"
-	"log"
 	"reflect"
 	"unsafe"
 )
@@ -134,7 +134,213 @@ func InitialUEMessageHandle(packet unsafe.Pointer) (int32, error) {
 	return enb_ie_s1ap_id, nil
 }
 
+func InitialContextSetupRequestHandle(packet unsafe.Pointer) []byte {
+	tmsi := []byte{}
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.InitialContextSetupRequest_t)(unsafe.Pointer(&msg.value.choice))
+
+	var ies []*C.InitialContextSetupRequestIEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Cap = (int)(val.protocolIEs.list.count)
+	slice.Len = (int)(val.protocolIEs.list.count)
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+
+	for _, ie := range ies {
+		switch ie.id {
+		case C.ProtocolIE_ID_id_E_RABToBeSetupListCtxtSUReq:
+			rab_setup := (*C.E_RABToBeSetupListCtxtSUReq_t)(unsafe.Pointer(&ie.value.choice))
+
+			var items []*C.E_RABToBeSetupItemCtxtSUReqIEs_t
+			slice := (*reflect.SliceHeader)((unsafe.Pointer(&items)))
+			slice.Cap = (int)(rab_setup.list.count)
+			slice.Len = (int)(rab_setup.list.count)
+			slice.Data = uintptr(unsafe.Pointer(rab_setup.list.array))
+
+			for _, item := range items {
+				su_req := (*C.E_RABToBeSetupItemCtxtSUReq_t)(unsafe.Pointer(&item.value.choice))
+
+				var nas_pdu_buf []byte
+				slice := (*reflect.SliceHeader)((unsafe.Pointer(&nas_pdu_buf)))
+				slice.Cap = (int)(su_req.nAS_PDU.size)
+				slice.Len = (int)(su_req.nAS_PDU.size)
+				slice.Data = uintptr(unsafe.Pointer(su_req.nAS_PDU.buf))
+
+				nas_pdu_buf = nas_pdu_buf[9:]                // GPRS timer
+				nas_pdu_buf = nas_pdu_buf[nas_pdu_buf[1]+1:] // TAI list
+				nas_pdu_buf = nas_pdu_buf[nas_pdu_buf[2]+3:] // ESM message container
+
+				if nas_pdu_buf[0] == 0x50 { // EPS mobility identity
+					tmsi = nas_pdu_buf[2+nas_pdu_buf[1]-4 : 2+nas_pdu_buf[1]] // T-MSI
+				}
+			}
+		}
+	}
+
+	return tmsi
+}
+
 func NAS_PDU_Handle() {
+}
+
+func ResponseHandle(packet unsafe.Pointer) int32 {
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+	var eNB_UE_S1AP_ID int32 = 0
+
+	switch msg.value.present {
+	default:
+		val := (*C.DownlinkNASTransport_t)(unsafe.Pointer(&msg.value.choice))
+
+		var ies []*C.DownlinkNASTransport_IEs_t
+		slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+		slice.Cap = (int)(val.protocolIEs.list.count)
+		slice.Len = (int)(val.protocolIEs.list.count)
+		slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+
+	FOR_LOOP:
+		for _, ie := range ies {
+			switch ie.id {
+			case C.ProtocolIE_ID_id_eNB_UE_S1AP_ID:
+				eNB_UE_S1AP_ID_c := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+				eNB_UE_S1AP_ID = (int32)(*eNB_UE_S1AP_ID_c)
+				break FOR_LOOP
+			}
+		}
+
+	case C.InitiatingMessage__value_PR_UEContextReleaseCommand:
+		val := (*C.UEContextReleaseCommand_t)(unsafe.Pointer(&msg.value.choice))
+
+		var items []*C.UEContextReleaseCommand_IEs_t
+		slice := (*reflect.SliceHeader)((unsafe.Pointer(&items)))
+		slice.Cap = (int)(val.protocolIEs.list.count)
+		slice.Len = (int)(val.protocolIEs.list.count)
+		slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+	FOR_LOOP_2:
+		for _, item := range items {
+			switch item.id {
+			case C.ProtocolIE_ID_id_UE_S1AP_IDs:
+				UE_S1AP_ID_c := (*C.UE_S1AP_IDs_t)(unsafe.Pointer(&item.value.choice))
+				uE_S1AP_ID_pair := (*C.UE_S1AP_ID_pair_t)(unsafe.Pointer(&UE_S1AP_ID_c.choice))
+				eNB_UE_S1AP_ID = (int32)((*uE_S1AP_ID_pair).eNB_UE_S1AP_ID)
+				break FOR_LOOP_2
+			}
+		}
+
+	}
+
+	return eNB_UE_S1AP_ID
+}
+
+func DownlinkNASTransportReject(packet unsafe.Pointer) (byte, byte) {
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.DownlinkNASTransport_t)(unsafe.Pointer(&msg.value.choice))
+
+	var ies []*C.DownlinkNASTransport_IEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Cap = (int)(val.protocolIEs.list.count)
+	slice.Len = (int)(val.protocolIEs.list.count)
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+
+	for _, ie := range ies {
+		switch ie.id {
+		case C.ProtocolIE_ID_id_NAS_PDU:
+			nas_pdu := (*C.NAS_PDU_t)(unsafe.Pointer(&ie.value.choice))
+
+			var nas_pdu_buf []byte
+			slice := (*reflect.SliceHeader)((unsafe.Pointer(&nas_pdu_buf)))
+			slice.Cap = (int)(nas_pdu.size)
+			slice.Len = (int)(nas_pdu.size)
+			slice.Data = uintptr(unsafe.Pointer(nas_pdu.buf))
+
+			var securityHeaderType byte
+			//var protocolDisc byte
+			securityHeaderType = (nas_pdu_buf[0] & 0xf0) >> 4
+			//protocolDisc = (nas_pdu_buf[0] & 0x0f)
+			nas_pdu_buf = nas_pdu_buf[1:]
+			//fmt.Printf("securityHeaderType: %d\n", securityHeaderType)
+			//fmt.Printf("protocolDisc: %02x\n", protocolDisc)
+			//fmt.Printf("Message type: %02x\n", nas_pdu_buf[6])
+
+			if securityHeaderType == 0x00 {
+				return nas_pdu_buf[0], nas_pdu_buf[1]
+			}
+
+			return nas_pdu_buf[6], nas_pdu_buf[7]
+		}
+	}
+
+	return 0, 0
+}
+
+func DownlinkNASTransportHandle(packet unsafe.Pointer) (int32, []byte, uint64, uint16) {
+	pdu := (*C.S1AP_PDU_t)(packet)
+	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
+	val := (*C.DownlinkNASTransport_t)(unsafe.Pointer(&msg.value.choice))
+	var mme_ie_s1ap_id int32 = 0
+
+	var ies []*C.DownlinkNASTransport_IEs_t
+	slice := (*reflect.SliceHeader)((unsafe.Pointer(&ies)))
+	slice.Cap = (int)(val.protocolIEs.list.count)
+	slice.Len = (int)(val.protocolIEs.list.count)
+	slice.Data = uintptr(unsafe.Pointer(val.protocolIEs.list.array))
+
+	for _, ie := range ies {
+		switch ie.id {
+		case C.ProtocolIE_ID_id_MME_UE_S1AP_ID:
+			//fmt.Println("IE: MME_UE_S1AP_ID")
+			mme_ie_s1ap_id_c := (*C.MME_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
+			mme_ie_s1ap_id = (int32)(*mme_ie_s1ap_id_c)
+		case C.ProtocolIE_ID_id_NAS_PDU:
+
+			nas_pdu := (*C.NAS_PDU_t)(unsafe.Pointer(&ie.value.choice))
+
+			var nas_pdu_buf []byte
+			slice := (*reflect.SliceHeader)((unsafe.Pointer(&nas_pdu_buf)))
+			slice.Cap = (int)(nas_pdu.size)
+			slice.Len = (int)(nas_pdu.size)
+			slice.Data = uintptr(unsafe.Pointer(nas_pdu.buf))
+
+			var securityHeaderType byte
+			//var protocolDisc byte
+
+			securityHeaderType = (nas_pdu_buf[0] & 0xf0) >> 4
+			//protocolDisc = (nas_pdu_buf[0] & 0x0f)
+			nas_pdu_buf = nas_pdu_buf[1:]
+			// typ := nas_pdu_buf[0]
+
+			var result_code byte = 0
+
+			if securityHeaderType == 0x00 {
+				result_code = nas_pdu_buf[0]
+			} else {
+				result_code = nas_pdu_buf[6]
+			}
+
+			if result_code == NAS_EPS_MOBILITY_MANAGEMENT_MESSAGE_TYPE_ATTACH_REJECT || len(nas_pdu_buf) < 27 {
+				return 0, []byte{}, 0, 0
+			}
+
+			/*
+				fmt.Printf("securityHeaderType: %02x\n", securityHeaderType)
+				fmt.Printf("protocolDisc: %02x\n", protocolDisc)
+				fmt.Printf("messageType: %02x\n", typ)
+				fmt.Printf("Leftover: %02x\n", nas_pdu_buf[1])
+				fmt.Printf("Rand: %v\n", nas_pdu_buf[2:18])
+				fmt.Printf("Len: %v\n", nas_pdu_buf[18])
+				fmt.Printf("Autn: %v\n", nas_pdu_buf[19:])
+				fmt.Printf("SQN: %v\n", nas_pdu_buf[19:25])
+				fmt.Printf("AMF: %v\n", nas_pdu_buf[25:27])
+			*/
+			sqn := []byte{0, 0}
+			sqn = append(sqn, nas_pdu_buf[19:25]...)
+
+			return mme_ie_s1ap_id, nas_pdu_buf[2:18], binary.LittleEndian.Uint64(sqn), binary.LittleEndian.Uint16(nas_pdu_buf[25:27])
+		}
+	}
+
+	return 0, []byte{}, 0, 0
 }
 
 func UplinkNASTransportHandle(packet unsafe.Pointer) (int32, int, error) {
@@ -154,11 +360,11 @@ func UplinkNASTransportHandle(packet unsafe.Pointer) (int32, int, error) {
 	for _, ie := range ies {
 		switch ie.id {
 		case C.ProtocolIE_ID_id_eNB_UE_S1AP_ID:
-			fmt.Println("IE: eNB_UE_S1AP_ID")
+			//fmt.Println("IE: eNB_UE_S1AP_ID")
 			enb_ie_s1ap_id_c := (*C.ENB_UE_S1AP_ID_t)(unsafe.Pointer(&ie.value.choice))
 			enb_ie_s1ap_id = (int32)(*enb_ie_s1ap_id_c)
 		case C.ProtocolIE_ID_id_NAS_PDU:
-			fmt.Println("IE: NAS_PDU")
+			//fmt.Println("IE: NAS_PDU")
 			// OCTET_STRING_T
 			// typedef struct OCTET_STRING {
 			// uint8_t *buf;   /* Buffer with consecutive OCTET_STRING bits */
@@ -173,28 +379,29 @@ func UplinkNASTransportHandle(packet unsafe.Pointer) (int32, int, error) {
 			slice.Cap = (int)(nas_pdu.size)
 			slice.Len = (int)(nas_pdu.size)
 			slice.Data = uintptr(unsafe.Pointer(nas_pdu.buf))
-
-			fmt.Println("NAS_PDU_LEN", len(nas_pdu_buf))
-			for _, val := range nas_pdu_buf {
-				fmt.Printf("%02x ", val)
-			}
-			fmt.Printf("\n")
+			/*
+				fmt.Println("NAS_PDU_LEN", len(nas_pdu_buf))
+				for _, val := range nas_pdu_buf {
+					fmt.Printf("%02x ", val)
+				}
+				fmt.Printf("\n")
+			*/
 			var securityHeaderType byte
 			var protocolDisc byte
 			for len(nas_pdu_buf) > 0 {
 				securityHeaderType = (nas_pdu_buf[0] & 0xf0) >> 4
 				protocolDisc = (nas_pdu_buf[0] & 0x0f)
 				nas_pdu_buf = nas_pdu_buf[1:]
-				fmt.Printf("securityHeaderType: %02x\n", securityHeaderType)
-				fmt.Printf("protocolDisc: %02x\n", protocolDisc)
+				//				fmt.Printf("securityHeaderType: %02x\n", securityHeaderType)
+				//				fmt.Printf("protocolDisc: %02x\n", protocolDisc)
 
 				if protocolDisc != 7 {
-					return 0, 0, fmt.Errorf("Protocol discrimiter is not EPS MMM")
+					return 0, 0, fmt.Errorf("protocol discrimiter is not EPS MMM")
 				}
 
 				switch securityHeaderType {
 				case 0:
-					fmt.Printf("MMM Type %02x\n", nas_pdu_buf[0])
+					//fmt.Printf("Type %02x\n", nas_pdu_buf[0])
 					typ := nas_pdu_buf[0]
 					nas_pdu_buf = nas_pdu_buf[1:]
 					switch typ {
@@ -212,17 +419,17 @@ func UplinkNASTransportHandle(packet unsafe.Pointer) (int32, int, error) {
 				case 4:
 					nas_pdu_buf = nas_pdu_buf[5:]
 				default:
-					return 0, 0, fmt.Errorf("Security header type is not known %d", securityHeaderType)
+					return 0, 0, fmt.Errorf("security header type is not known %d", securityHeaderType)
 				}
 			}
 		case C.ProtocolIE_ID_id_TAI:
-			fmt.Println("IE: TAI")
+			//fmt.Println("IE: TAI")
 			//TAI = &ie->value.choice.TAI;
 		case C.ProtocolIE_ID_id_EUTRAN_CGI:
-			fmt.Println("IE: EUTRAN_CGI")
+			//fmt.Println("IE: EUTRAN_CGI")
 			//EUTRAN_CGI = &ie->value.choice.EUTRAN_CGI;
 		case C.ProtocolIE_ID_id_S_TMSI:
-			fmt.Println("IE: S_TMSI")
+			//fmt.Println("IE: S_TMSI")
 			//S_TMSI = &ie->value.choice.S_TMSI;
 		default:
 		}
@@ -249,21 +456,25 @@ func Decode(buf []byte) (unsafe.Pointer, int, error) {
 	}
 
 	pdu := (*C.S1AP_PDU_t)(packet)
-	log.Println("PDU type:", S1AP_PDU2String(pdu.present))
+	//fmt.Println("PDU type:", S1AP_PDU2String(pdu.present))
 
 	typ := 0
 	switch pdu.present {
 	case C.S1AP_PDU_PR_NOTHING:
 	case C.S1AP_PDU_PR_initiatingMessage:
 		msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
-		log.Println("Message type:", S1AP_Initiating2String(msg.value.present))
+		//fmt.Println("Message type:", S1AP_Initiating2String(msg.value.present))
 		switch msg.value.present {
 		case C.InitiatingMessage__value_PR_S1SetupRequest:
 			typ = S1_SETUP_REQUEST
 		case C.InitiatingMessage__value_PR_InitialUEMessage:
 			typ = INITIAL_UE_MESSAGE
+		case C.InitiatingMessage__value_PR_InitialContextSetupRequest:
+			typ = INITIAL_CONTEXT_SETUP_REQUEST
 		case C.InitiatingMessage__value_PR_UplinkNASTransport:
 			typ = UPLINK_NAS_TRANSPORT
+		case C.InitiatingMessage__value_PR_DownlinkNASTransport:
+			typ = DOWNLINK_NAS_TRANSPORT
 		default:
 		}
 	case C.S1AP_PDU_PR_successfulOutcome:

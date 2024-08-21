@@ -13,6 +13,7 @@
 
 /* Including external dependencies */
 #include "MME-UE-S1AP-ID.h"
+#include "UE-S1AP-ID-pair.h"
 #include <constr_CHOICE.h>
 
 #ifdef __cplusplus
@@ -35,7 +36,7 @@ struct UE_S1AP_ID_pair;
 typedef struct UE_S1AP_IDs {
 	UE_S1AP_IDs_PR present;
 	union UE_S1AP_IDs_u {
-		struct UE_S1AP_ID_pair	*uE_S1AP_ID_pair;
+		UE_S1AP_ID_pair_t	 uE_S1AP_ID_pair;
 		MME_UE_S1AP_ID_t	 mME_UE_S1AP_ID;
 		/*
 		 * This type is extensible,

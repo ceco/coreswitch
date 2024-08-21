@@ -17,7 +17,7 @@ static asn_per_constraints_t asn_PER_type_UE_S1AP_IDs_constr_1 CC_NOTUSED = {
 	0, 0	/* No PER value map */
 };
 static asn_TYPE_member_t asn_MBR_UE_S1AP_IDs_1[] = {
-	{ ATF_POINTER, 0, offsetof(struct UE_S1AP_IDs, choice.uE_S1AP_ID_pair),
+	{ ATF_NOFLAGS, 0, offsetof(struct UE_S1AP_IDs, choice.uE_S1AP_ID_pair),
 		(ASN_TAG_CLASS_CONTEXT | (0 << 2)),
 		-1,	/* IMPLICIT tag at current level */
 		&asn_DEF_UE_S1AP_ID_pair,
