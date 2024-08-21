@@ -1,4 +1,4 @@
-module github.com/coreswitch/coreswitch
+module github.com/ceco/coreswitch
 
 go 1.12
 
