@@ -134,8 +134,12 @@ func InitialUEMessageHandle(packet unsafe.Pointer) (int32, error) {
 	return enb_ie_s1ap_id, nil
 }
 
-func InitialContextSetupRequestHandle(packet unsafe.Pointer) []byte {
-	tmsi := []byte{}
+func InitialContextSetupRequestHandle(packet unsafe.Pointer) ([]byte, []byte, []byte, []byte) {
+	var tmsi []byte
+	var transportLayerAddress []byte
+	var gTP_TEID []byte
+	var pdn_addr []byte
+
 	pdu := (*C.S1AP_PDU_t)(packet)
 	msg := *(**C.InitiatingMessage_t)(unsafe.Pointer(&pdu.choice))
 	val := (*C.InitialContextSetupRequest_t)(unsafe.Pointer(&msg.value.choice))
@@ -160,24 +164,51 @@ func InitialContextSetupRequestHandle(packet unsafe.Pointer) []byte {
 			for _, item := range items {
 				su_req := (*C.E_RABToBeSetupItemCtxtSUReq_t)(unsafe.Pointer(&item.value.choice))
 
+				slice1 := (*reflect.SliceHeader)((unsafe.Pointer(&gTP_TEID)))
+				slice1.Cap = (int)(su_req.gTP_TEID.size)
+				slice1.Len = (int)(su_req.gTP_TEID.size)
+				slice1.Data = uintptr(unsafe.Pointer(su_req.gTP_TEID.buf))
+
+				slice2 := (*reflect.SliceHeader)((unsafe.Pointer(&transportLayerAddress)))
+				slice2.Cap = (int)(su_req.transportLayerAddress.size)
+				slice2.Len = (int)(su_req.transportLayerAddress.size)
+				slice2.Data = uintptr(unsafe.Pointer(su_req.transportLayerAddress.buf))
+
 				var nas_pdu_buf []byte
-				slice := (*reflect.SliceHeader)((unsafe.Pointer(&nas_pdu_buf)))
-				slice.Cap = (int)(su_req.nAS_PDU.size)
-				slice.Len = (int)(su_req.nAS_PDU.size)
-				slice.Data = uintptr(unsafe.Pointer(su_req.nAS_PDU.buf))
+				slice3 := (*reflect.SliceHeader)((unsafe.Pointer(&nas_pdu_buf)))
+				slice3.Cap = (int)(su_req.nAS_PDU.size)
+				slice3.Len = (int)(su_req.nAS_PDU.size)
+				slice3.Data = uintptr(unsafe.Pointer(su_req.nAS_PDU.buf))
 
-				nas_pdu_buf = nas_pdu_buf[9:]                // GPRS timer
-				nas_pdu_buf = nas_pdu_buf[nas_pdu_buf[1]+1:] // TAI list
-				nas_pdu_buf = nas_pdu_buf[nas_pdu_buf[2]+3:] // ESM message container
+				// GPRS timer
+				nas_pdu_buf = nas_pdu_buf[9:]
+				// TAI list
+				nas_pdu_buf = nas_pdu_buf[1:]
 
-				if nas_pdu_buf[0] == 0x50 { // EPS mobility identity
-					tmsi = nas_pdu_buf[2+nas_pdu_buf[1]-4 : 2+nas_pdu_buf[1]] // T-MSI
+				// ESM message container
+				nas_pdu_buf = nas_pdu_buf[1+nas_pdu_buf[0]:]
+				esm_size := uint16(nas_pdu_buf[0])<<8 | uint16(nas_pdu_buf[1])
+
+				// APN
+				apn_size := nas_pdu_buf[7]
+				//fmt.Println(apn_size)
+				//fmt.Printf("APN: %v\n", string(nas_pdu_buf[8:8+apn_size]))
+
+				// PDN address
+				pdn_size := nas_pdu_buf[8+apn_size]
+				pdn_addr = nas_pdu_buf[10+apn_size : 10+apn_size+pdn_size-1]
+
+				// EPS mobility identity
+				nas_pdu_buf = nas_pdu_buf[2+esm_size:]
+				// T-MSI
+				if nas_pdu_buf[0] == 0x50 {
+					tmsi = nas_pdu_buf[2+nas_pdu_buf[1]-4 : 2+nas_pdu_buf[1]]
 				}
 			}
 		}
 	}
 
-	return tmsi
+	return tmsi, gTP_TEID, transportLayerAddress, pdn_addr
 }
 
 func NAS_PDU_Handle() {
@@ -267,7 +298,14 @@ func DownlinkNASTransportReject(packet unsafe.Pointer) (byte, byte) {
 				return nas_pdu_buf[0], nas_pdu_buf[1]
 			}
 
-			return nas_pdu_buf[6], nas_pdu_buf[7]
+			var cause byte = 0
+
+			if len(nas_pdu_buf) > 7 {
+				cause = nas_pdu_buf[7]
+			}
+
+			return nas_pdu_buf[6], cause
+
 		}
 	}
 
@@ -475,6 +513,8 @@ func Decode(buf []byte) (unsafe.Pointer, int, error) {
 			typ = UPLINK_NAS_TRANSPORT
 		case C.InitiatingMessage__value_PR_DownlinkNASTransport:
 			typ = DOWNLINK_NAS_TRANSPORT
+		case C.InitiatingMessage__value_PR_ErrorIndication:
+			typ = ERROR_INDICATION
 		default:
 		}
 	case C.S1AP_PDU_PR_successfulOutcome:
