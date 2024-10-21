@@ -203,10 +203,10 @@ S1InitialUeMessageRequestBuild(S1AP_PDU_t *pdu, unsigned char *mmebuf, int mmebu
   ie->value.present = InitialUEMessage_IEs__value_PR_TAI;
 
   unsigned char plmn_data[PLMN_ID_LEN] = { 0x62, 0xf8, 0x10 };
-  s1ap_buffer_to_OCTET_STRING((unsigned char *)plmn_data, strlen(plmn_data), &ie->value.choice.TAI.pLMNidentity);
+  s1ap_buffer_to_OCTET_STRING((unsigned char *)plmn_data, PLMN_ID_LEN, &ie->value.choice.TAI.pLMNidentity);
 
   unsigned char tac[2] = {0x00, 0x01};
-  s1ap_buffer_to_OCTET_STRING((unsigned char *)tac, 2, &ie->value.choice.TAI.tAC);
+  s1ap_buffer_to_OCTET_STRING((unsigned char *)tac, sizeof(tac), &ie->value.choice.TAI.tAC);
 }
 
 void
